@@ -102,6 +102,10 @@ Core/Container/                          # 容器契约 + 默认实现（零依�
 
 将来接入 DI 容器时，适配器作为变体独立成程序集（如 `Core/Container.VContainer/`，引用 Core + 第三方容器）；第三方自行桥接则放宿主侧 `App/HotUpdate/Modules/`。
 
+`ServiceLocator` 是普通类而非静态单例：静态全局状态不可测试，且作用域需要持有各自的实例状态，二者都要求以实例形式存在。`ServiceKey` 在服务类型之外携带一个可选名称，使同一契约的多个平台变体（见下方骨架的 `Runtime/Unity/`、`Runtime/Steam/`）得以并存。
+
+`Core/Container` 与 `Core/ModuleSystem` 的源码按约定零 `UnityEngine` 引用，虽与其余 Core 子系统同属一个程序集，但这一约束使日后将容器整体抽离（若出现第二个使用方）无需拆分程序集。设计细节见 [Docs/Design/Container.md](Docs/Design/Container.md)。
+
 ### 模块标准骨架
 
 功能模块自包含，其余模块与 Audio 同构：
@@ -124,17 +128,17 @@ Modules/Audio/
 
 | 模块 | 目录 | 说明 | 状态 |
 | --- | --- | --- | --- |
-| 容器与模块系统 | `Core/Container`、`Core/ModuleSystem`、`Core/Bootstrap` | 读写分离的容器契约（默认定位器实现，可替换为 DI 容器）、模块生命周期与启动编排，由装配清单驱动、可裁剪 | 📋 规划中 |
+| 容器与模块系统 | `Core/Container`、`Core/ModuleSystem`、`Core/Bootstrap` | 读写分离的容器契约（默认定位器实现，可替换为 DI 容器）、模块生命周期与启动编排，由装配清单驱动、可裁剪 | 🚧 搭建中 |
 | 命令系统 | `Core/CommandSystem` | 以命令为单元封装操作，支持命令的统一调度、撤销 / 重做等能力 | 🚧 搭建中 |
 | 事件中心 | `Core/EventCenter` | 全局事件分发中枢，实现模块间松耦合通信 | 🚧 搭建中 |
 | 有限状态机 | `Core/FiniteStateMachine` | 通用状态机，支撑角色 AI、流程控制等状态驱动场景 | 🚧 搭建中 |
-| 对象池 | `Core/ObjectPool` | `UnityEngine.Object` 级别的对象复用，降低频繁实例化 / 销毁的开销 | 🚧 搭建中 |
+| 对象池 | `Core/ObjectPool` | `UnityEngine.Object` 级别的对象复用，降低频繁实例化 / 销毁的开销 | ✅ 已完成 |
 | 引用池 | `Core/ReferencePool` | 纯 C# 类对象的引用复用，减少 GC 分配 | 🚧 搭建中 |
 | ECS 运行时 | `Shared/ECS` | 可选机制：World / Entity / Query / System、存储策略与确定性随机 | 📋 规划中 |
 | 热更通道 | `Modules/HotUpdate`、`Modules/Lua` | HybridCLR 程序集热更与 XLua 热修双通道 | 📋 规划中 |
 | 工具集 | `Kits` | 通用工具与编辑器扩展，持续沉淀 | 📋 规划中 |
 
-> 状态说明：🚧 搭建中 = 目录与设计已就绪，代码开发中；📋 规划中 = 已列入路线图。模块完成后请同步更新本表。
+> 状态说明：✅ 已完成 = 代码与测试已落地；🚧 搭建中 = 目录与设计已就绪，代码开发中；📋 规划中 = 已列入路线图。模块完成后请同步更新本表。
 
 ## 工程化配套
 
@@ -143,7 +147,39 @@ Modules/Audio/
 - **测试工程**：客户端基于 Unity Test Framework，覆盖 EditMode 单元测试与 PlayMode 集成测试；共享层与服务端基于 xUnit（`dotnet test`）建立契约测试，核心模块与双端接口以测试驱动保障行为正确与重构安全。
 - **性能工程**：建立性能基准与量化指标（GC 分配、耗时、内存等），通过基准测试与 Profiler 实测持续监控框架的性能表现，防止性能退化。
 
-> 两项工程随对应模块的建设逐步落地，落地后将在此处补充目录位置与使用方式。
+客户端测试工程位置与运行方式：
+
+| 套件 | 目录 | 程序集 | 运行方式 |
+| --- | --- | --- | --- |
+| EditMode 单元测试 | `Assets/WindFrameWork/Tests/EditMode/` | `WindFrameWork.Tests.EditMode` | `Window > General > Test Runner > EditMode` |
+| PlayMode 集成测试 | `Assets/WindFrameWork/Tests/PlayMode/` | `WindFrameWork.Tests.PlayMode` | `Window > General > Test Runner > PlayMode` |
+
+两个测试程序集均以 `UNITY_INCLUDE_TESTS` 为编译约束，因此在正式构建中不会被编入。性能基准目前以 `GC.GetAllocatedBytesForCurrentThread()` 的零分配断言形式落在 `Tests/PlayMode/ObjectPool/`（标记 `Performance` 分类）；待引入 `com.unity.test-framework.performance` 后迁至 `Tests/Benchmarks/`。
+
+> 服务端与共享层的 xUnit 测试工程随 `Shared` / `Server` 落地时补充。
+
+### 对象池
+
+`Core/ObjectPool` 提供 `UnityEngine.Object` 级别的对象复用。要点：
+
+```csharp
+// 配置集中承载全部可调项，无散落的魔法数字
+var config = new ObjectPoolConfig("Bullet", prewarmCount: 16, maxIdleSize: 64, maxLiveSize: 256);
+var pool = new ObjectPool<GameObject>(() => Instantiate(bulletPrefab), config, poolRoot);
+
+// 租出得到租约凭证，归还必须交回同一凭证
+PooledHandle<GameObject> handle = pool.Rent();
+handle.Object.transform.position = muzzle.position;
+pool.Return(handle);
+```
+
+- **必须归还凭证而非对象**：归还时凭槽位下标与代数做 O(1) 校验，无需任何哈希表。重复归还、陈旧凭证与跨池凭证一律抛异常——这类错误会静默破坏空闲链表并引发远更难排查的故障。此行为与 `UnityEngine.Pool` 的 `collectionCheck` 不同（后者默认关闭且为 O(n)），属有意选择的快速失败。
+- **状态重写由业务实现**：池不修改位置与旋转。需要重置的池化组件实现 `IPoolable`，在 `OnRentFromPool` 中还原自身状态。
+- **三个值得关注的统计量**：`HitRate`（命中率，过低说明预热不足）、`PeakLiveCount`（并发峰值，用于 sizing）、`DiscardedDestroyedCount`（生产环境非零意味着池外代码在直接销毁池内对象，属需追查的缺陷）。
+- **仅主线程可用**：池内 Unity 对象操作要求主线程，故全链路不加锁，只在开发构建下断言线程归属。
+- **并发超限抛异常而非返回 null**：池耗尽意味着调用方漏归还，属应立即暴露的缺陷。
+
+设计细节见 [Docs/Design/ObjectPool.md](Docs/Design/ObjectPool.md)。
 
 ## 快速开始
 
