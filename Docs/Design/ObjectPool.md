@@ -57,6 +57,15 @@ _freeHead           -1 表示空闲链表为空
 
 空闲上限与并发上限是两个独立配置：`MaxIdleSize` 是内存占用上限，`MaxLiveSize` 是并发上限。合并为单个数值将迫使在「保持大热缓存」与「禁止超过 N 并发」之间取舍，而二者互不相关。
 
+## 元素为组件时的销毁目标
+
+`TObject` 允许是 `Component`，此时销毁一律作用于其宿主 `GameObject`，而非组件本身：
+
+1. **`Transform` 不允许被单独销毁**，引擎直接报错 `Can't destroy Transform component`。工厂创建宿主时池就是宿主的唯一持有者，销毁组件等于留下一个空壳。
+2. 其余组件单独销毁虽不报错，但会留下没有任何组件的 `GameObject` 残骸，属于无法回收的悬挂对象。
+
+因此 `DestroyItem` 在销毁前把目标改写为 `component.gameObject`。该规则对 `Clear`、`Dispose` 与空闲溢出三条路径统一生效。
+
 ## 已销毁对象（fake null）处理
 
 必须使用 Unity 重载的 `==`（原生 `CompareBaseObjects` 调用）判断销毁状态。**`ReferenceEquals` 免费但错误**：它对已销毁对象仍返回 true。
@@ -90,6 +99,8 @@ _freeHead           -1 表示空闲链表为空
 `IPoolLifecycleAdapter<TObject>` 抽象类型特定的状态变更。这一层是必需的：`SetActive` 与 `transform` 只存在于 `GameObject`，泛型池无法直接调用，而在池内部做类型判断会同时违反单一职责与开闭原则。内置实现 `UnityObjectLifecycleAdapter<TObject>` 无状态且以静态单例共享，不为每个池产生额外分配。
 
 `IPoolable` 供业务组件重置自身状态。钩子在**对象创建时解析一次**并按槽位缓存（`GetComponents<IPoolable>()` 每次调用都分配数组，逐次调用将破坏零分配保证）。`ObjectPoolConfig.CollectHooksFromChildren` 默认为 `false`：`GetComponentsInChildren` 显著更贵，且静默扫描整棵层级是「钩子为何触发两次」的常见来源。
+
+适配器回调的触发时机即其契约，三者语义如下：**`OnCreated` 在对象创建后触发一次；`OnRent` 仅在实际租出时触发；`OnReturned` 仅在实际归还时触发。** 对象创建后立即调用 `OnReturned` 属于伪调用——它既不是归还，又会让适配器的归还计数虚高一次，并在「租出新建对象」时造成「激活→停用→激活」的无谓抖动。停用只发生在真正进入空闲状态的路径上，即预热与归还。
 
 **池不修改 `localPosition` / `localRotation`**：重置变换属于业务策略，应在 `IPoolable.OnRentFromPool` 中实现。
 

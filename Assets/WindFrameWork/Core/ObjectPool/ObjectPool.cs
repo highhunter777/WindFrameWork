@@ -283,10 +283,9 @@ namespace WindFrameWork.Core.ObjectPool
 
             _adapter.OnCreated(item, _poolRoot, _config);
 
-            if (_config.DeactivateOnReturn)
-            {
-                _adapter.OnReturned(item);
-            }
+            // 此处刻意不调用 OnReturned：刚刚创建的对象既未租出也未归还，
+            // 提前触发归还回调会让适配器的归还计数虚高一次，并造成「激活→停用→激活」的状态抖动。
+            // 停用只发生在真正进入空闲状态的路径上（预热与归还）。
 
             int slot = _slots.Attach(item, hooks);
             return slot;
@@ -352,6 +351,10 @@ namespace WindFrameWork.Core.ObjectPool
         /// <summary>
         /// 按播放态选择销毁 API：编辑态调用 Destroy 会报错，播放态调用 DestroyImmediate 会被禁止。
         /// </summary>
+        /// <remarks>
+        /// 元素为组件时销毁其宿主 GameObject：<c>Transform</c> 不允许被单独销毁（引擎直接报错），
+        /// 其余组件单独销毁则会在场景里留下空宿主——而创建宿主的正是池的工厂。
+        /// </remarks>
         private static void DestroyItem(TObject item)
         {
             if (item == null)
@@ -359,13 +362,15 @@ namespace WindFrameWork.Core.ObjectPool
                 return;
             }
 
+            UnityEngine.Object target = item is Component component ? component.gameObject : item;
+
             if (Application.isPlaying)
             {
-                UnityEngine.Object.Destroy(item);
+                UnityEngine.Object.Destroy(target);
             }
             else
             {
-                UnityEngine.Object.DestroyImmediate(item);
+                UnityEngine.Object.DestroyImmediate(target);
             }
         }
 

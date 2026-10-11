@@ -72,7 +72,9 @@ namespace WindFrameWork.Tests.EditMode.ObjectPool
 
             Assert.That(hiddenHandle.Object.transform.parent.gameObject.hideFlags & HideFlags.HideInHierarchy,
                 Is.EqualTo(HideFlags.HideInHierarchy));
-            Assert.That(shownHandle.Object.transform.parent.gameObject.hideFlags & HideFlags.HideInHierarchy, Is.Zero);
+            // 枚举零值须与 HideFlags.None 比较：Is.Zero 会因类型不兼容而失败。
+            Assert.That(shownHandle.Object.transform.parent.gameObject.hideFlags & HideFlags.HideInHierarchy,
+                Is.EqualTo(HideFlags.None));
         }
 
         [Test]
