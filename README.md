@@ -133,7 +133,8 @@ Modules/Audio/
 | 事件中心 | `Core/EventCenter` | 全局事件分发中枢，实现模块间松耦合通信 | 🚧 搭建中 |
 | 有限状态机 | `Core/FiniteStateMachine` | 通用状态机，支撑角色 AI、流程控制等状态驱动场景 | 🚧 搭建中 |
 | 对象池 | `Core/ObjectPool` | `UnityEngine.Object` 级别的对象复用，降低频繁实例化 / 销毁的开销 | ✅ 已完成 |
-| 引用池 | `Core/ReferencePool` | 纯 C# 类对象的引用复用，减少 GC 分配 | 🚧 搭建中 |
+| 引用池 | `Core/ReferencePool` | 纯 C# 类对象的引用复用，减少 GC 分配，默认可跨线程 | ✅ 已完成 |
+| 异步运行时 | `Kits/UniTask` | 第三方异步运行时接入与跨程序集契约验证，含 Git 依赖的离线还原 | 🚧 搭建中 |
 | ECS 运行时 | `Shared/ECS` | 可选机制：World / Entity / Query / System、存储策略与确定性随机 | 📋 规划中 |
 | 热更通道 | `Modules/HotUpdate`、`Modules/Lua` | HybridCLR 程序集热更与 XLua 热修双通道 | 📋 规划中 |
 | 工具集 | `Kits` | 通用工具与编辑器扩展，持续沉淀 | 📋 规划中 |
@@ -154,7 +155,7 @@ Modules/Audio/
 | EditMode 单元测试 | `Assets/WindFrameWork/Tests/EditMode/` | `WindFrameWork.Tests.EditMode` | `Window > General > Test Runner > EditMode` |
 | PlayMode 集成测试 | `Assets/WindFrameWork/Tests/PlayMode/` | `WindFrameWork.Tests.PlayMode` | `Window > General > Test Runner > PlayMode` |
 
-两个测试程序集均以 `UNITY_INCLUDE_TESTS` 为编译约束，因此在正式构建中不会被编入。性能基准目前以 `GC.GetAllocatedBytesForCurrentThread()` 的零分配断言形式落在 `Tests/PlayMode/ObjectPool/`（标记 `Performance` 分类）；待引入 `com.unity.test-framework.performance` 后迁至 `Tests/Benchmarks/`。
+两个测试程序集均以 `UNITY_INCLUDE_TESTS` 为编译约束，因此在正式构建中不会被编入。性能基准目前以 `GC.GetAllocatedBytesForCurrentThread()` 的零分配断言形式落在 `Tests/PlayMode/ObjectPool/` 与 `Tests/PlayMode/ReferencePool/`（标记 `Performance` 分类）；待引入 `com.unity.test-framework.performance` 后迁至 `Tests/Benchmarks/`。
 
 > 服务端与共享层的 xUnit 测试工程随 `Shared` / `Server` 落地时补充。
 
@@ -180,6 +181,45 @@ pool.Return(handle);
 - **并发超限抛异常而非返回 null**：池耗尽意味着调用方漏归还，属应立即暴露的缺陷。
 
 设计细节见 [Docs/Design/ObjectPool.md](Docs/Design/ObjectPool.md)。
+
+### 引用池
+
+`Core/ReferencePool` 提供纯 C# 引用类型对象的复用，典型场景是每帧产生的 `List<T>`、字典、协议包与命令缓冲。要点：
+
+```csharp
+// 自行持有：容器类元素在归还时清空，池自身不猜业务状态
+var config = new ReferencePoolConfig("PacketBuffer", prewarmCount: 16, maxIdleSize: 128);
+var pool = new ReferencePool<List<int>>(() => new List<int>(), config, onReset: list => list.Clear());
+
+ReferenceHandle<List<int>> handle = pool.Rent();
+handle.Object.Add(payload);
+pool.Return(handle);
+
+// 散点需求：按「类型 + 业务键」取共享池；仅在初始化阶段取一次，热路径缓存引用
+ReferencePool<Packet> shared = ReferencePools.GetOrCreate<Packet>("battle");
+```
+
+- **必须归还凭证而非对象**：与对象池同一套槽位代数校验，O(1)、无需哈希表，重复归还、陈旧凭证与跨池凭证一律抛异常。**不支持按实例归还**——那需要 `Dictionary<T, int>` 反查，会把稳态零分配变成依赖字典容量的性质。
+- **默认可跨线程**：纯托管元素没有 Unity 的主线程约束，故默认 `Synchronized`（以池对象为互斥）；确认单线程流转时可显式切换 `SingleThread` 以省掉一次 `Monitor`，越界访问在开发构建下立即抛异常。
+- **两个回调界定清理责任**：`onReset`（归还时，清理容器与字段）与 `onRelease`（对象永久离开池时，释放非托管资源与回写指标）。池不对 `T` 隐式执行 `IDisposable`——池不是对象生命周期的所有者。
+- **溢出即解除引用**：`MaxIdleSize` 是可审计的内存硬边界，超出部分交还 GC 而非保留。`ReleasedCount` 与 `CreateCount` 之差即外部未归还量，持续增长意味着漏归还。
+- **`ReferencePools` 静态入口是便利而非唯一用法**：它按字符串组合键查找，不应进入每帧路径。
+- **`Clear` / `Dispose` 会解除全部引用并令在外的凭证失效**：它不是温和的空闲清理，调用后仍需归还的对象会收到异常。
+
+设计细节见 [Docs/Design/ReferencePool.md](Docs/Design/ReferencePool.md)。
+
+### 异步运行时
+
+`Kits/UniTask` 承载 UniTask（第三方，Git URL 引入）的接入。与前两者不同，它**刻意只做诊断而不做生命周期管理**：UniTask 自带 `BeforeSceneLoad` 的 PlayerLoop 注入，框架再插一手只会制造第二个初始化来源。核心程序集 `WindFrameWork.Core` 的 `references` 保持为空——某个子系统将来要用异步时，应由该模块声明自有契约、UniTask 版实现作为变体独立成程序集。
+
+```csharp
+// 诊断快照：主线程身份 + 未完成任务计数
+var snapshot = UniTaskBridge.CaptureSnapshot();
+```
+
+Git 依赖的版本实际由 `packages-lock.json` 的 **commit 级 hash** 锁定（比 tag 更严格，tag 可移动）。本机对 `github.com` 直连不稳定，因此**不要在 URL 上加 `#tag`**——UPM 会先删掉本地缓存再重新下载，下载失败即让整个工程编译失败。两个脚本用于兜底：`scripts/packages/export-package-cache.ps1` 导出 `Library/PackageCache` 中的 Git 依赖到 `.cache/packages`（已忽略入库），`restore-package-cache.ps1` 校验 commit 后还原。
+
+设计细节与 IL2CPP + HybridCLR 验证清单见 [Docs/Design/UniTaskBridge.md](Docs/Design/UniTaskBridge.md)。
 
 ## 快速开始
 
