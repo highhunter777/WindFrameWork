@@ -118,3 +118,8 @@ InitTestScene*.unity*
 # 杂项
 .DS_Store
 Thumbs.db
+# Unity Pipeline：从 Unity Registry 抓取的第三方包 + 2022.3 本地补丁，不入库
+# 复原方式见 Docs/UnityPipeline本地补丁.md
+/Packages/com.unity.pipeline/
+# Git 依赖的本地缓存（scripts/packages/*.ps1 导出产物，不入库）
+/.cache/

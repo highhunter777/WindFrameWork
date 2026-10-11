@@ -2,6 +2,8 @@
   "dependencies": {
     "com.code-philosophy.hybridclr": "https://github.com/focus-creative-games/hybridclr_unity.git",
     "com.code-philosophy.luban": "https://gitee.com/focus-creative-games/luban_unity.git",
+    "com.cysharp.unitask": "https://github.com/Cysharp/UniTask.git?path=src/UniTask/Assets/Plugins/UniTask",
+    "com.tuyoogame.yooasset": "3.0.6",
     "com.unity.cinemachine": "2.10.7",
     "com.unity.collab-proxy": "2.6.0",
     "com.unity.ide.rider": "3.0.34",
@@ -46,5 +48,14 @@
     "com.unity.modules.vr": "1.0.0",
     "com.unity.modules.wind": "1.0.0",
     "com.unity.modules.xr": "1.0.0"
-  }
+  },
+  "scopedRegistries": [
+    {
+      "name": "package.openupm.com",
+      "url": "https://package.openupm.com",
+      "scopes": [
+        "com.tuyoogame.yooasset"
+      ]
+    }
+  ]
 }

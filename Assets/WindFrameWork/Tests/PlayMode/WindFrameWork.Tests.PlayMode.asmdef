@@ -3,6 +3,9 @@
     "rootNamespace": "WindFrameWork.Tests.PlayMode",
     "references": [
         "WindFrameWork.Core",
+        "WindFrameWork.Kits.UniTask",
+        "WindFrameWork.Kits.UniTask.Samples",
+        "UniTask",
         "UnityEngine.TestRunner"
     ],
     "includePlatforms": [],
