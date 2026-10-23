@@ -12,7 +12,7 @@ namespace WindFrameWork.Kits.UniTaskSamples
     /// 热更侧编译出的 <c>async</c> 方法，其状态机类型是该侧独有的泛型实例，AOT 侧并不存在对应代码。
     /// 编辑器（Mono）下两者都能即时编译，因此这里的用例验证的是**跨程序集契约**；
     /// 真正的 AOT 泛型缺口只有在 IL2CPP + HybridCLR 构建后才暴露，验证步骤见
-    /// <c>Docs/Design/UniTaskBridge.md</c>。
+    /// <c>Docs/设计文档/UniTaskBridge.md</c>。
     /// </remarks>
     public static class HotUpdateLikeService
     {
